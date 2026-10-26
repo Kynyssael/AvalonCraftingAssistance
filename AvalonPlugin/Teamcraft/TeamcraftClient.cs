@@ -35,6 +35,16 @@ public sealed partial class TeamcraftClient(HttpClient http, TeamcraftAuth auth,
     }
 
     /// <summary>
+    /// When the list was last saved, without downloading its items (only the tiny "etag" field is fetched).
+    /// Used to poll for changes made in Teamcraft.
+    /// </summary>
+    public async Task<string?> GetListUpdateTimeAsync(string listId, CancellationToken ct)
+    {
+        using var doc = await SendAsync(HttpMethod.Get, $"lists/{Uri.EscapeDataString(listId)}", null, ct, "&mask.fieldPaths=etag");
+        return doc?.RootElement.GetProperty("updateTime").GetString();
+    }
+
+    /// <summary>
     /// Changes who is working on some rows of a list, the way Teamcraft's own "assign" does: it only touches
     /// each row's workingOnIt and bumps the list's etag so open Teamcraft windows pick the change up.
     /// </summary>

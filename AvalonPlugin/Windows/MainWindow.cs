@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Threading;
+using System.Threading.Tasks;
 using AvalonPlugin.Avalon;
 using AvalonPlugin.Teamcraft;
 using AvalonPlugin.Universalis;
@@ -22,6 +23,12 @@ public class MainWindow : Window, IDisposable
     private TeamcraftList? pricesFor;
     private TeamcraftTeam? currentTeam;
     private bool onlyMyItems;
+
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(10);
+    private Task<string?>? pollTask;
+    private string? pollListId;
+    private DateTime nextPoll;
+    private DateTime? lastPolled;
     private int typedAmount;
     private bool focusAmountBox;
     private string listLink = string.Empty;
@@ -182,7 +189,10 @@ public class MainWindow : Window, IDisposable
         var current = list.Value;
         if (current == null) return;
 
+        PollForChanges(current);
         ImGui.Text(current.Name);
+        ImGui.SameLine();
+        ImGui.TextDisabled(lastPolled is { } polled ? $"(synced with Teamcraft {polled:HH:mm:ss})" : "(syncing with Teamcraft)");
         var selectedTeamId = plugin.Configuration.SelectedTeamId;
         if (current.TeamId == null)
             ImGui.TextColored(ImGuiColors.DalamudYellow, "This list is not attached to a team in Teamcraft.");
@@ -197,6 +207,35 @@ public class MainWindow : Window, IDisposable
             DrawRows("##final", current.FinalItems, true);
         if (ImGui.CollapsingHeader($"Materials ({current.Items.Count})"))
             DrawRows("##items", current.Items, false);
+    }
+
+    /// <summary>
+    /// Keeps the open list in sync with changes made in Teamcraft. Every few seconds it asks Teamcraft when the
+    /// list was last saved (a tiny request) and reloads it only if that changed. Runs only while the window is drawn.
+    /// </summary>
+    private void PollForChanges(TeamcraftList current)
+    {
+        if (pollTask is { IsCompleted: true } finished)
+        {
+            pollTask = null;
+            if (finished.IsCompletedSuccessfully)
+            {
+                lastPolled = DateTime.Now;
+                var changed = finished.Result is { } updateTime && updateTime != current.UpdateTime;
+                if (changed && pollListId == current.Id && !list.IsLoading)
+                    list.Start(() => plugin.Teamcraft.GetListAsync(current.Id, CancellationToken.None));
+            }
+            else
+            {
+                Plugin.Log.Debug(finished.Exception?.GetBaseException(), "Checking the list for changes failed");
+            }
+        }
+
+        // Don't check while a save or reload is running; their result already has the latest version.
+        if (pollTask != null || list.IsLoading || DateTime.UtcNow < nextPoll) return;
+        nextPoll = DateTime.UtcNow + PollInterval;
+        var listId = pollListId = current.Id;
+        pollTask = Task.Run(() => plugin.Teamcraft.GetListUpdateTimeAsync(listId, CancellationToken.None));
     }
 
     /// <summary>Drop-down of the selected team's lists, then the user's own lists.</summary>
