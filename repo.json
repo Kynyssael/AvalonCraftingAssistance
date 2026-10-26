@@ -1,0 +1,29 @@
+[
+    {
+        "Author":  "Carl",
+        "Name":  "Avalon Crafting Assistance",
+        "InternalName":  "AvalonPlugin",
+        "AssemblyVersion":  "0.1.0.0",
+        "Description":  "Avalon Crafting Assistance lets the Avalon team work on Teamcraft lists in game: assign items to crafters, mark progress, and check North America market prices on Universalis.",
+        "ApplicableVersion":  "any",
+        "RepoUrl":  "https://github.com/Kynyssael/AvalonCraftingAssistance",
+        "Tags":  [
+                     "crafting",
+                     "teamcraft",
+                     "universalis",
+                     "team"
+                 ],
+        "DalamudApiLevel":  15,
+        "LoadRequiredState":  0,
+        "LoadSync":  false,
+        "CanUnloadAsync":  false,
+        "LoadPriority":  0,
+        "Punchline":  "Share crafting lists with your team and assign items to members.",
+        "AcceptsFeedback":  true,
+        "IconUrl":  "https://raw.githubusercontent.com/Kynyssael/AvalonCraftingAssistance/main/Data/icon.png",
+        "DownloadLinkInstall":  "https://raw.githubusercontent.com/Kynyssael/AvalonCraftingAssistance/main/release/latest.zip",
+        "DownloadLinkUpdate":  "https://raw.githubusercontent.com/Kynyssael/AvalonCraftingAssistance/main/release/latest.zip",
+        "DownloadLinkTesting":  "https://raw.githubusercontent.com/Kynyssael/AvalonCraftingAssistance/main/release/latest.zip",
+        "LastUpdate":  1793031621
+    }
+]
