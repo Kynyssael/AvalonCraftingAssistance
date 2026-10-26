@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>0.1.0.0</Version>
+    <Version>0.1.1.0</Version>
     <!-- Manifest fields, shown in /xlplugins. The internal name stays "AvalonPlugin" so settings carry over. -->
-    <Author>Carl</Author>
+    <Author>Elenor</Author>
     <Name>Avalon Crafting Assistance</Name>
     <Punchline>Share crafting lists with your team and assign items to members.</Punchline>
     <Description>Avalon Crafting Assistance lets the Avalon team work on Teamcraft lists in game: assign items to crafters, mark progress, and check North America market prices on Universalis.</Description>
