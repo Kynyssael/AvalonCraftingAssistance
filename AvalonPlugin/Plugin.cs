@@ -21,13 +21,22 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
     [PluginService] internal static IClientState ClientState { get; private set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
+    [PluginService] internal static IPlayerState PlayerState { get; private set; } = null!;
+    [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
 
     public Configuration Configuration { get; }
+    public InventoryService Inventory { get; }
+
+    /// <summary>Item sections from game data; built on first use (reads a few game sheets).</summary>
+    public ItemSources ItemSources => itemSources.Value;
+    private readonly Lazy<ItemSources> itemSources = new(() => new ItemSources());
     public AvalonKeyService AvalonKey { get; }
     public TeamcraftAuth TeamcraftAuth { get; }
     public TeamcraftClient Teamcraft { get; }
     public UniversalisClient Universalis { get; }
+    public AvalonApi AvalonApi { get; }
+    public QuoteWindow QuoteWindow { get; }
 
     private readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
@@ -43,12 +52,16 @@ public sealed class Plugin : IDalamudPlugin
         TeamcraftAuth = new TeamcraftAuth(http, Configuration);
         Teamcraft = new TeamcraftClient(http, TeamcraftAuth, Configuration);
         Universalis = new UniversalisClient(http);
+        Inventory = new InventoryService(Configuration);
+        AvalonApi = new AvalonApi(http, AvalonKey);
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
+        QuoteWindow = new QuoteWindow(this);
 
         WindowSystem.AddWindow(ConfigWindow);
         WindowSystem.AddWindow(MainWindow);
+        WindowSystem.AddWindow(QuoteWindow);
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
@@ -83,6 +96,14 @@ public sealed class Plugin : IDalamudPlugin
         var item = DataManager.GetExcelSheet<Item>().GetRowOrDefault(id);
         var name = item?.Name.ExtractText();
         return string.IsNullOrEmpty(name) ? $"Item #{id}" : name;
+    }
+
+    /// <summary>The item's icon from the game files, or null for custom items.</summary>
+    public static Dalamud.Interface.Textures.TextureWraps.IDalamudTextureWrap? GetItemIcon(TeamcraftListRow row)
+    {
+        if (row.GameItemId is not { } id || DataManager.GetExcelSheet<Item>().GetRowOrDefault(id) is not { } item || item.Icon == 0)
+            return null;
+        return TextureProvider.GetFromGameIcon(new Dalamud.Interface.Textures.GameIconLookup(item.Icon)).GetWrapOrDefault();
     }
 
     /// <summary>True for items that can be sold on the market board.</summary>

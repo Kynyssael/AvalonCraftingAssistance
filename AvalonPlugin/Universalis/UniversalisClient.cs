@@ -9,8 +9,53 @@ using System.Threading.Tasks;
 
 namespace AvalonPlugin.Universalis;
 
-/// <summary>Cheapest current listing for an item across North America.</summary>
-public sealed record MarketPrice(uint ItemId, long PricePerUnit, string World, bool Hq);
+/// <summary>One market board listing: a stack sold as a whole.</summary>
+public sealed record MarketListing(long PricePerUnit, int Quantity, string World, bool Hq);
+
+/// <summary>Current NA listings for an item, cheapest first.</summary>
+public sealed record MarketPrice(uint ItemId, IReadOnlyList<MarketListing> Listings)
+{
+    public MarketListing Cheapest => Listings[0];
+    public long PricePerUnit => Cheapest.PricePerUnit;
+    public string World => Cheapest.World;
+    public bool Hq => Cheapest.Hq;
+
+    /// <summary>
+    /// The cheapest way to buy at least <paramref name="needed"/> units. Listings are bought whole, so this picks
+    /// the cheapest combination of stacks (one small stack can beat a cheap-per-unit stack of 999).
+    /// <c>Bought</c> can be more than needed; when the listings we know of don't add up to the amount,
+    /// <c>Enough</c> is false and the cost is buying all of them.
+    /// </summary>
+    public (long Cost, int Bought, bool Enough) CostToBuy(int needed)
+    {
+        if (needed <= 0) return (0, 0, true);
+
+        var listed = Listings.Sum(l => l.Quantity);
+        if (listed < needed)
+            return (Listings.Sum(l => l.PricePerUnit * l.Quantity), listed, false);
+
+        // Minimum-cost cover: best[q] = cheapest way to get at least q units (q capped at needed).
+        var best = new long[needed + 1];
+        var units = new int[needed + 1];
+        Array.Fill(best, long.MaxValue);
+        best[0] = 0;
+        foreach (var listing in Listings)
+        {
+            var stackCost = listing.PricePerUnit * listing.Quantity;
+            for (var have = needed; have >= 0; have--)
+            {
+                if (best[have] == long.MaxValue) continue;
+                var next = Math.Min(needed, have + listing.Quantity);
+                if (best[have] + stackCost < best[next])
+                {
+                    best[next] = best[have] + stackCost;
+                    units[next] = units[have] + listing.Quantity;
+                }
+            }
+        }
+        return (best[needed], units[needed], true);
+    }
+}
 
 /// <summary>Reads market board prices from Universalis, always for the North America region.</summary>
 public sealed class UniversalisClient(HttpClient http)
@@ -19,7 +64,9 @@ public sealed class UniversalisClient(HttpClient http)
     public const string Region = "North-America";
     private const string BaseUrl = "https://universalis.app/api/v2";
     private const int MaxItemsPerRequest = 100; // Universalis limit
+    private const int ListingsPerItem = 50;     // enough to cost buying a few hundred of something
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
+    private static readonly string[] ListingFields = ["pricePerUnit", "quantity", "worldName", "hq"];
 
     private readonly ConcurrentDictionary<uint, (MarketPrice? Price, DateTimeOffset Fetched)> cache = new();
 
@@ -32,7 +79,10 @@ public sealed class UniversalisClient(HttpClient http)
 
         foreach (var chunk in missing.Chunk(MaxItemsPerRequest))
         {
-            var url = $"{BaseUrl}/{Region}/{string.Join(',', chunk)}?listings=1&entries=0";
+            // Ask only for the listing fields we use. Several ids nest results under "items.".
+            var prefix = chunk.Length > 1 ? "items." : string.Empty;
+            var fields = string.Join(',', ListingFields.Select(f => $"{prefix}listings.{f}").Append($"{prefix}itemID"));
+            var url = $"{BaseUrl}/{Region}/{string.Join(',', chunk)}?listings={ListingsPerItem}&entries=0&fields={fields}";
             using var response = await http.GetAsync(url, ct);
             if (!response.IsSuccessStatusCode)
                 throw new Exception($"Universalis request failed ({(int)response.StatusCode}).");
@@ -64,11 +114,14 @@ public sealed class UniversalisClient(HttpClient http)
         if (!item.TryGetProperty("listings", out var listings) || listings.GetArrayLength() == 0)
             return null;
 
-        var cheapest = listings[0];
-        return new MarketPrice(
-            id,
-            cheapest.GetProperty("pricePerUnit").GetInt64(),
-            cheapest.TryGetProperty("worldName", out var world) ? world.GetString() ?? "?" : "?",
-            cheapest.TryGetProperty("hq", out var hq) && hq.GetBoolean());
+        var parsed = listings.EnumerateArray()
+            .Select(l => new MarketListing(
+                l.GetProperty("pricePerUnit").GetInt64(),
+                l.TryGetProperty("quantity", out var q) ? q.GetInt32() : 1,
+                l.TryGetProperty("worldName", out var world) ? world.GetString() ?? "?" : "?",
+                l.TryGetProperty("hq", out var hq) && hq.GetBoolean()))
+            .OrderBy(l => l.PricePerUnit)
+            .ToList();
+        return new MarketPrice(id, parsed);
     }
 }

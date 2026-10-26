@@ -2,10 +2,14 @@
 
 A Dalamud plugin for FINAL FANTASY XIV that lets the Avalon team work on [Teamcraft](https://ffxivteamcraft.com) lists in game:
 
-- Pick your Teamcraft team and its lists from a drop-down.
-- The team leader assigns items (or a whole list) to members.
-- Assigned crafters mark progress (−, +, type an amount, or complete), with ingredients updated the same way Teamcraft does.
-- Cheapest North America market prices from [Universalis](https://universalis.app).
+- Pick your Teamcraft team and its lists from a drop-down; lists stay in sync with Teamcraft.
+- Lists are divided like Teamcraft (final items, crystals, vendors, gathering, pre-crafts…).
+- The team leader assigns items (or a whole list) to members; crafters can show only their own work.
+- Assigned crafters mark progress (−, +, type an amount, complete, or fill from inventory), with ingredients updated the same way Teamcraft does.
+- See what you own in bags, saddlebag and retainers.
+- Cheapest North America market prices from [Universalis](https://universalis.app), and an estimate to buy the remaining materials.
+- Leaders and officers send quotes to Avalon website tickets.
+- Copy the remaining crafts as an [Artisan](https://github.com/PunishXIV/Artisan) list.
 
 Access needs a personal key from the Avalon website (team crafters only).
 

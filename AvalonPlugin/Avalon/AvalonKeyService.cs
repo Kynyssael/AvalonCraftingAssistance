@@ -50,6 +50,12 @@ public sealed class AvalonKeyService : IDisposable
 
     public bool IsUnlocked => State == AvalonKeyState.Valid;
 
+    /// <summary>Whether the website lets this key send quotes to tickets.</summary>
+    public bool CanQuote { get; private set; }
+
+    /// <summary>The saved key, for calling the website's plugin endpoints.</summary>
+    internal string? Key => SecretStore.Unprotect(config.AvalonKey);
+
     public bool HasKey => SecretStore.Unprotect(config.AvalonKey) != null;
 
     public void SetKey(string key)
@@ -109,6 +115,8 @@ public sealed class AvalonKeyService : IDisposable
             if (!root.TryGetProperty("valid", out var valid) || !valid.GetBoolean())
                 return (AvalonKeyState.Invalid, null, ReasonMessage(ReadString(json, "reason")));
 
+            // The website says whether this key's owner may send quotes (admins, managers, Staff role).
+            CanQuote = root.TryGetProperty("canQuote", out var canQuote) && canQuote.ValueKind == JsonValueKind.True;
             return (AvalonKeyState.Valid, ReadString(json, "crafterName"), null);
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException)

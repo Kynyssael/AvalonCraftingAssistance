@@ -106,7 +106,8 @@ public sealed partial class TeamcraftClient(HttpClient http, TeamcraftAuth auth,
                 d.Id,
                 d.Fields["name"]?.ToString() ?? "(unnamed team)",
                 d.Fields["leader"]?.ToString() ?? string.Empty,
-                ReadStrings(d.Fields["members"])))
+                ReadStrings(d.Fields["members"]),
+                ReadStrings(d.Fields["officers"])))
             .ToList();
     }
 
@@ -294,7 +295,8 @@ public sealed partial class TeamcraftClient(HttpClient http, TeamcraftAuth auth,
                 row["recipeId"]?.ToString(),
                 (int)FirestoreJson.ToLong(row["amount"]),
                 (int)FirestoreJson.ToLong(row["done"]),
-                ReadStrings(row["workingOnIt"])))
+                ReadStrings(row["workingOnIt"]),
+                row["requires"] is JsonArray { Count: > 0 }))
             .ToList() ?? [];
 
     private static List<string> ReadStrings(JsonNode? node) =>

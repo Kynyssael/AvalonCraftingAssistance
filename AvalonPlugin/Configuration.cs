@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using Dalamud.Configuration;
 
 namespace AvalonPlugin;
@@ -19,6 +20,9 @@ public class Configuration : IPluginConfiguration
     public string? TeamcraftRefreshToken { get; set; }
 
     public string? SelectedTeamId { get; set; }
+
+    /// <summary>Saddlebag and retainer contents per character (content id), from when they were last opened.</summary>
+    public Dictionary<ulong, CharacterInventories> Inventories { get; set; } = [];
 
     /// <summary>For crafters (not the team leader): show only lists and items assigned to them.</summary>
     public bool OnlyMyAssignments { get; set; } = true;

@@ -54,3 +54,30 @@ Any other status (5xx, etc.) makes the plugin show "can't reach the Avalon websi
 ### Rate limiting
 
 Limit failed attempts per IP (e.g. 20 per minute) so keys can't be guessed.
+
+## Quotes from the plugin
+
+The verify response also has `"canQuote": true|false` — true for admins, managers and members with the
+Discord Staff role (the people who can press **Send quote** in a ticket). Both endpoints below need such a key
+(`401` for a bad key, `403` when the owner can't quote). Failed keys count toward the same rate limit.
+
+### `GET /api/plugin/requests`
+
+Requests a quote can be sent for (accepted or in progress, ticket not closed), newest first:
+
+```json
+[{ "id": "req-…", "number": 12, "client": "Name", "service": "Crafting", "artist": "Ayame", "status": "accepted",
+   "quote": { "status": "pending", "price": "84,250 gil" } | null,
+   "teamcraft": { "listId": "…", "listName": "…" } | null, "hasTicket": true }]
+```
+
+### `POST /api/plugin/requests/:id/quote`
+
+```json
+{ "service": "…", "price": "…", "details": "…", "dueDate": "…", "teamcraftListId": "…", "teamcraftListName": "…" }
+```
+
+Same limits as the Discord quote form (120 / 60 / 1000 / 60 characters). Sends or replaces the quote exactly like
+**Send quote** (the client must accept it), remembers the Teamcraft list on the request, and posts the quote in the
+Discord ticket. Returns `{ "ok": true, "number": 12, "postedToTicket": true }`; `postedToTicket` is false when the
+request has no ticket or the bot is offline (the client can still answer under **My requests**).

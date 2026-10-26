@@ -30,7 +30,7 @@ public sealed class Loadable<T> where T : class
             {
                 var error = t.Exception?.GetBaseException();
                 Error = error?.Message ?? "Cancelled.";
-                if (error is not Teamcraft.TeamcraftException)
+                if (error is not (Teamcraft.TeamcraftException or Avalon.AvalonException))
                     Plugin.Log.Error(error, "Background load failed");
             }
         }, TaskScheduler.Default);

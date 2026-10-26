@@ -61,6 +61,10 @@ public class ConfigWindow : Window, IDisposable
         {
             case AvalonKeyState.Valid:
                 ImGui.TextColored(ImGuiColors.HealerGreen, $"Key accepted{(key.CrafterName != null ? $" for {key.CrafterName}" : string.Empty)}.");
+                if (key.CanQuote)
+                    ImGui.TextColored(ImGuiColors.HealerGreen, "You can send quotes to tickets.");
+                else
+                    ImGui.TextDisabled("Sending quotes: not allowed (website admins, managers and the Discord Staff role only).");
                 break;
             case AvalonKeyState.Checking:
                 ImGui.Text("Checking key…");

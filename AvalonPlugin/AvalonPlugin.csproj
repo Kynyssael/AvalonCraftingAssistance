@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>0.1.3.0</Version>
+    <Version>0.2.0.0</Version>
     <!-- Manifest fields, shown in /xlplugins. The internal name stays "AvalonPlugin" so settings carry over. -->
     <Author>Elenor</Author>
     <Name>Avalon Crafting Assistance</Name>
     <Punchline>Share crafting lists with your team and assign items to members.</Punchline>
     <Description>Avalon Crafting Assistance lets the Avalon team work on Teamcraft lists in game: assign items to crafters, mark progress, and check North America market prices on Universalis.</Description>
     <Tags>crafting;teamcraft;universalis;team</Tags>
+    <!-- Reading bags and retainers uses FFXIVClientStructs pointers. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RepoUrl>https://github.com/Kynyssael/AvalonCraftingAssistance</RepoUrl>
   </PropertyGroup>
 
@@ -17,6 +19,11 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Visible>false</Visible>
     </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Small ADC logo shown in the window header, built into the DLL. -->
+    <EmbeddedResource Include="Resources\logo.png" LogicalName="AvalonPlugin.logo.png" />
   </ItemGroup>
 
   <ItemGroup>

@@ -44,7 +44,7 @@ internal static class ListProgress
             var delta = change.SetTo is { } target
                 ? Math.Clamp(target, 0, row.Amount) - row.Done
                 : change.Delta ?? row.Amount - row.Done;
-            if (delta == 0) continue;
+            if (delta == 0 || (change.OnlyIncrease && delta < 0)) continue;
             SetDone(finalItems, items, change.ItemId, delta, !change.FinalItem, change.FinalItem, false, change.RecipeId, delta);
         }
 

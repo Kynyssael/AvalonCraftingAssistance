@@ -8,7 +8,10 @@ using AvalonPlugin.Avalon;
 using AvalonPlugin.Teamcraft;
 using AvalonPlugin.Universalis;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 using Dalamud.Interface.Colors;
+using Dalamud.Interface.Components;
+using Dalamud.Interface.Utility;
 using Dalamud.Interface.Windowing;
 
 namespace AvalonPlugin.Windows;
@@ -21,8 +24,13 @@ public class MainWindow : Window, IDisposable
     private readonly Loadable<ListChoices> listChoices = new();
     private readonly Loadable<IReadOnlyDictionary<uint, MarketPrice>> prices = new();
     private TeamcraftList? pricesFor;
+    private (TeamcraftList? List, IReadOnlyDictionary<uint, MarketPrice>? Prices, bool Filtered) estimateFor;
+    private BuyEstimate? estimate;
     private TeamcraftTeam? currentTeam;
     private bool onlyMyItems;
+    private (string Text, DateTime At)? artisanMessage;
+    private TeamcraftList? sectionsFor;
+    private List<(ListSection Section, List<(bool Final, TeamcraftListRow Row)> Rows)> sections = [];
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(10);
     private Task<string?>? pollTask;
@@ -54,8 +62,16 @@ public class MainWindow : Window, IDisposable
     // Reload the list drop-down each time the window opens, so new assignments show up.
     public override void OnOpen() => listChoicesTeamId = null;
 
+    public override void PreDraw() => Theme.Push();
+
+    public override void PostDraw() => Theme.Pop();
+
     public override void Draw()
     {
+        DrawHeader();
+        ImGui.Separator();
+        ImGui.Spacing();
+
         if (!plugin.AvalonKey.IsUnlocked)
         {
             DrawLocked();
@@ -63,11 +79,38 @@ public class MainWindow : Window, IDisposable
         }
 
         plugin.Teamcraft.SaveNamesIfChanged();
-        DrawAccountBar();
-        ImGui.Separator();
         DrawTeam();
-        ImGui.Separator();
         DrawList();
+    }
+
+    /// <summary>ADC logo, plugin name, Teamcraft account and a settings button.</summary>
+    private void DrawHeader()
+    {
+        const float logoSize = 44;
+        var logo = Plugin.TextureProvider.GetFromManifestResource(typeof(Plugin).Assembly, "AvalonPlugin.logo.png").GetWrapOrEmpty();
+        ImGui.Image(logo.Handle, new Vector2(logoSize, logoSize) * ImGuiHelpers.GlobalScale);
+        ImGui.SameLine();
+
+        ImGui.BeginGroup();
+        ImGui.SetWindowFontScale(1.35f);
+        ImGui.TextColored(Theme.Lavender, "Avalon Crafting Assistance");
+        ImGui.SetWindowFontScale(1f);
+        var auth = plugin.TeamcraftAuth;
+        if (!plugin.AvalonKey.IsUnlocked)
+            ImGui.TextColored(Theme.Muted, "Team crafters only");
+        else if (auth.IsSignedIn)
+            ImGui.TextColored(Theme.Muted, $"Teamcraft: {plugin.Teamcraft.GetDisplayName(auth.Uid!)}");
+        else
+            ImGui.TextColored(ImGuiColors.DalamudYellow, "Not signed in to Teamcraft");
+        ImGui.EndGroup();
+
+        // Settings button, right-aligned.
+        var buttonWidth = ImGui.GetFrameHeight() + ImGui.GetStyle().FramePadding.X * 2;
+        ImGui.SameLine(ImGui.GetWindowContentRegionMax().X - buttonWidth);
+        if (ImGuiComponents.IconButton(FontAwesomeIcon.Cog))
+            plugin.ToggleConfigUi();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(auth.IsSignedIn ? "Settings" : "Settings — sign in to Teamcraft here");
     }
 
     private void DrawLocked()
@@ -91,19 +134,6 @@ public class MainWindow : Window, IDisposable
             if (ImGui.Button("Retry"))
                 key.StartCheck();
         }
-    }
-
-    private void DrawAccountBar()
-    {
-        var auth = plugin.TeamcraftAuth;
-        if (auth.IsSignedIn)
-            ImGui.Text($"Teamcraft: {plugin.Teamcraft.GetDisplayName(auth.Uid!)}");
-        else
-            ImGui.TextColored(ImGuiColors.DalamudYellow, "Not signed in to Teamcraft (lists are read-only).");
-
-        ImGui.SameLine();
-        if (ImGui.SmallButton(auth.IsSignedIn ? "Settings" : "Sign in…"))
-            plugin.ToggleConfigUi();
     }
 
     private void DrawTeam()
@@ -141,20 +171,34 @@ public class MainWindow : Window, IDisposable
             ImGui.EndCombo();
         }
         ImGui.SameLine();
-        if (ImGui.SmallButton("Refresh##teams"))
+        if (ImGuiComponents.IconButton("##refreshTeams", FontAwesomeIcon.SyncAlt))
             teams.Start(() => plugin.Teamcraft.GetMyTeamsAsync(CancellationToken.None));
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Reload teams");
+
+        if (selected != null)
+        {
+            // Members on hover, to keep the toolbar compact.
+            ImGui.SameLine();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextColored(Theme.Muted, $"{selected.Members.Count} members");
+            if (ImGui.IsItemHovered())
+            {
+                var members = selected.Members.Select(uid =>
+                    plugin.Teamcraft.GetDisplayName(uid) +
+                    (uid == selected.Leader ? "  (leader)" : selected.Officers.Contains(uid) ? "  (officer)" : string.Empty));
+                ImGui.SetTooltip(string.Join("\n", members));
+            }
+            if (IsLeader || IsOfficer)
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(Theme.Gold, IsLeader ? "Leader" : "Officer");
+            }
+        }
 
         if (teams.Error != null)
             ImGui.TextColored(ImGuiColors.DalamudRed, teams.Error);
         else if (teams.Value is { Count: 0 })
             ImGui.TextDisabled("You are not in any Teamcraft team.");
-
-        if (selected != null)
-        {
-            var members = selected.Members.Select(uid =>
-                plugin.Teamcraft.GetDisplayName(uid) + (uid == selected.Leader ? " (leader)" : string.Empty));
-            ImGui.TextWrapped($"Members: {string.Join(", ", members)}");
-        }
     }
 
     private void DrawList()
@@ -190,9 +234,19 @@ public class MainWindow : Window, IDisposable
         if (current == null) return;
 
         PollForChanges(current);
-        ImGui.Text(current.Name);
+
+        // List title card: name, sync time, and overall progress.
+        ImGui.Spacing();
+        ImGui.SetWindowFontScale(1.2f);
+        ImGui.TextColored(Theme.Gold, current.Name);
+        ImGui.SetWindowFontScale(1f);
         ImGui.SameLine();
-        ImGui.TextDisabled(lastPolled is { } polled ? $"(synced with Teamcraft {polled:HH:mm:ss})" : "(syncing with Teamcraft)");
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextColored(Theme.Muted, lastPolled is { } polled ? $"synced {polled:HH:mm:ss}" : "syncing…");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Changes made in Teamcraft show up here within about 10 seconds.");
+        var allRows = current.FinalItems.Concat(current.Items).ToList();
+        Theme.Progress(allRows.Count(r => r.Done >= r.Amount), allRows.Count, -1, suffix: " items done");
         var selectedTeamId = plugin.Configuration.SelectedTeamId;
         if (current.TeamId == null)
             ImGui.TextColored(ImGuiColors.DalamudYellow, "This list is not attached to a team in Teamcraft.");
@@ -203,11 +257,32 @@ public class MainWindow : Window, IDisposable
         DrawBulkAssign(current);
         DrawMyItemsBar(current);
 
-        if (ImGui.CollapsingHeader($"Final items ({current.FinalItems.Count})", ImGuiTreeNodeFlags.DefaultOpen))
-            DrawRows("##final", current.FinalItems, true);
-        if (ImGui.CollapsingHeader($"Materials ({current.Items.Count})"))
-            DrawRows("##items", current.Items, false);
+        plugin.Inventory.Refresh();
+        DrawSections(current);
     }
+
+    /// <summary>The list divided like Teamcraft's default layout: final items, crystals, vendors, gathering, pre-crafts…</summary>
+    private void DrawSections(TeamcraftList current)
+    {
+        if (!ReferenceEquals(sectionsFor, current))
+        {
+            sectionsFor = current;
+            sections = plugin.ItemSources.Group(current);
+        }
+
+        foreach (var (section, rows) in sections)
+        {
+            var visible = rows.Where(x => !HidesRow(x.Row)).ToList();
+            if (visible.Count == 0) continue;
+
+            var done = visible.Count(x => x.Row.Done >= x.Row.Amount);
+            var flags = section is ListSection.Crystals ? ImGuiTreeNodeFlags.None : ImGuiTreeNodeFlags.DefaultOpen;
+            if (ImGui.CollapsingHeader($"{ItemSources.Title(section)}  ({done}/{visible.Count} done)###section{section}", flags))
+                DrawRows(visible, section);
+        }
+    }
+
+    private bool HidesRow(TeamcraftListRow row) => (CrafterFilter || (IsLeader && onlyMyItems)) && !IsMine(row);
 
     /// <summary>
     /// Keeps the open list in sync with changes made in Teamcraft. Every few seconds it asks Teamcraft when the
@@ -276,8 +351,9 @@ public class MainWindow : Window, IDisposable
             ImGui.EndCombo();
         }
         ImGui.SameLine();
-        if (ImGui.SmallButton("Refresh##lists"))
+        if (ImGuiComponents.IconButton("##refreshLists", FontAwesomeIcon.SyncAlt))
             LoadListChoices(teamId);
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Reload lists");
 
         // Crafters can narrow everything down to their own work; the leader always sees all of it.
         if (currentTeam != null && !IsLeader)
@@ -349,6 +425,137 @@ public class MainWindow : Window, IDisposable
             : "Prices: cheapest listing on North America (Universalis).");
         if (prices.Error != null)
             ImGui.TextColored(ImGuiColors.DalamudRed, prices.Error);
+
+        DrawBuyEstimate(current);
+        DrawSendQuote(current);
+        DrawCopyForArtisan(current);
+    }
+
+    /// <summary>Copies the crafts still to do as an Artisan list, for Artisan's "Import List From Clipboard".</summary>
+    private void DrawCopyForArtisan(TeamcraftList current)
+    {
+        if (IsLeader || IsOfficer) ImGui.SameLine();
+        if (ImGuiComponents.IconButtonWithText(FontAwesomeIcon.Clipboard, "Copy for Artisan"))
+        {
+            var result = ArtisanExport.Build(current, row => !HidesRow(row));
+            if (result.Recipes == 0)
+            {
+                artisanMessage = ("Nothing left to craft here.", DateTime.UtcNow);
+            }
+            else
+            {
+                ImGui.SetClipboardText(result.Json);
+                var skipped = result.Skipped.Count > 0 ? $" Skipped: {string.Join(", ", result.Skipped)}." : string.Empty;
+                artisanMessage = ($"Copied {result.Recipes} recipes ({result.Crafts:N0} crafts). In Artisan: Crafting Lists > " +
+                                  $"\"Import List From Clipboard (Artisan Export)\".{skipped}", DateTime.UtcNow);
+            }
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("Copies the crafts still to do as an Artisan crafting list: pre-crafts first, then final items.\n" +
+                             (CrafterFilter || (IsLeader && onlyMyItems) ? "Only your assigned items are included.\n" : string.Empty) +
+                             "Then in Artisan, open Crafting Lists and press \"Import List From Clipboard (Artisan Export)\".");
+        }
+
+        // Confirmation for a few seconds after copying.
+        if (artisanMessage is { } message && DateTime.UtcNow - message.At < TimeSpan.FromSeconds(12))
+            ImGui.TextColored(Theme.Done, message.Text);
+    }
+
+    /// <summary>
+    /// What buying the rest of the raw materials would cost on NA. Pre-crafts and final items are left out,
+    /// since they're made from those materials. Follows the "only my items/assignments" filter.
+    /// </summary>
+    private void DrawBuyEstimate(TeamcraftList current)
+    {
+        if (prices.Value is not { } known) return;
+
+        // Working out the cheapest stacks is too slow to redo every frame; only redo it when something changed.
+        var filtered = CrafterFilter || (IsLeader && onlyMyItems);
+        if (!ReferenceEquals(estimateFor.List, current) || !ReferenceEquals(estimateFor.Prices, known) || estimateFor.Filtered != filtered)
+        {
+            estimateFor = (current, known, filtered);
+            estimate = BuildBuyEstimate(current, known);
+        }
+        if (estimate is not { } e) return;
+
+        // Grouped so hovering anywhere on the line shows the breakdown.
+        ImGui.BeginGroup();
+        ImGui.AlignTextToFramePadding();
+        ImGui.Text($"Buy {(filtered ? "your remaining materials" : "remaining materials")} on NA:");
+        ImGui.SameLine();
+        ImGui.TextColored(Theme.Gold, $"about {e.Total:N0} gil");
+        if (e.Missing.Count > 0)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(ImGuiColors.DalamudYellow, $"({e.Missing.Count} not fully available)");
+        }
+        ImGui.EndGroup();
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(e.Tooltip);
+    }
+
+    private sealed record BuyEstimate(long Total, IReadOnlyList<string> Missing, string Tooltip);
+
+    /// <summary>"Send quote" for website staff: opens the quote window with the whole list's material estimate.</summary>
+    private void DrawSendQuote(TeamcraftList current)
+    {
+        // Only the Teamcraft team's leader and officers send quotes, and the website must also allow their key.
+        // Everyone else never sees the button; a leader/officer whose key isn't allowed sees it greyed out with the reason.
+        if (!IsLeader && !IsOfficer) return;
+        var canQuote = plugin.AvalonKey.CanQuote;
+
+        if (!canQuote) ImGui.BeginDisabled();
+        if (ImGuiComponents.IconButtonWithText(FontAwesomeIcon.FileInvoiceDollar, "Send quote to a ticket"))
+        {
+            // Quotes are for the whole order, so ignore the "only my items" filter here.
+            var whole = prices.Value is { } known ? BuildBuyEstimate(current, known, applyFilter: false) : null;
+            plugin.QuoteWindow.Open(current, whole?.Total);
+        }
+        if (!canQuote) ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+        {
+            ImGui.SetTooltip(canQuote
+                ? "Send a quote for this list to a ticket on the Avalon website (posted in its Discord ticket)."
+                : "You're a team leader/officer, but the Avalon website hasn't allowed your key to send quotes.\n" +
+                  "Quotes are for website admins, managers (Admin > Team) and the Discord Staff role.\n" +
+                  "If that's you, open Settings > Avalon key and press \"Check again\".");
+        }
+    }
+
+    private BuyEstimate? BuildBuyEstimate(TeamcraftList current, IReadOnlyDictionary<uint, MarketPrice> known, bool applyFilter = true)
+    {
+        var toBuy = current.Items
+            .Where(r => !r.IsCraft && r.GameItemId is not null && r.Done < r.Amount && !(applyFilter && HidesRow(r)))
+            .Select(r => (Row: r, Needed: r.Amount - r.Done))
+            .ToList();
+        if (toBuy.Count == 0) return null;
+
+        long total = 0;
+        var breakdown = new List<(string Line, long Cost)>();
+        var missing = new List<string>();
+        foreach (var (row, needed) in toBuy)
+        {
+            var name = Plugin.GetItemName(row);
+            if (!known.TryGetValue(row.GameItemId!.Value, out var price))
+            {
+                missing.Add(Plugin.IsMarketable(row.GameItemId.Value) ? $"{name} (no listings)" : $"{name} (can't be sold)");
+                continue;
+            }
+
+            var (cost, bought, enough) = price.CostToBuy(needed);
+            total += cost;
+            var note = !enough ? $"  — only {bought:N0} listed" : bought > needed ? $"  (buys {bought:N0})" : string.Empty;
+            breakdown.Add(($"{name} ×{needed:N0}: {cost:N0} gil{note}", cost));
+            if (!enough) missing.Add($"{name} (only {bought:N0} of {needed:N0} listed)");
+        }
+
+        var lines = breakdown.OrderByDescending(b => b.Cost).Select(b => b.Line).ToList();
+        if (missing.Count > 0)
+            lines.AddRange(["", "Not included / short:", .. missing]);
+        lines.AddRange(["", "Raw materials only (pre-crafts are made from them). Uses the cheapest", "combination of whole stacks on any NA world. Prices refresh every 5 minutes."]);
+        return new BuyEstimate(total, missing, string.Join("\n", lines));
     }
 
     private void DrawPrice(TeamcraftListRow row)
@@ -371,7 +578,18 @@ public class MainWindow : Window, IDisposable
 
         ImGui.Text($"{price.PricePerUnit:N0}{(price.Hq ? " HQ" : string.Empty)}");
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip($"Cheapest North America listing, on {price.World}.\nTotal for {row.Amount}: about {price.PricePerUnit * row.Amount:N0} gil");
+        {
+            var needed = row.Amount - row.Done;
+            var tip = $"Cheapest North America price per unit, on {price.World}.";
+            if (needed > 0)
+            {
+                var (cost, bought, enough) = price.CostToBuy(needed);
+                tip += enough
+                    ? $"\nBuying the {needed:N0} still needed: about {cost:N0} gil{(bought > needed ? $" ({bought:N0} in whole stacks)" : string.Empty)}"
+                    : $"\nOnly {bought:N0} of the {needed:N0} still needed are listed ({cost:N0} gil).";
+            }
+            ImGui.SetTooltip(tip);
+        }
         ImGui.SameLine();
         ImGui.TextDisabled(price.World);
     }
@@ -418,8 +636,9 @@ public class MainWindow : Window, IDisposable
         {
             var popupId = $"assign##{(finalItem ? "f" : "i")}{row.ItemId}";
             if (list.IsLoading) ImGui.BeginDisabled();
-            if (ImGui.SmallButton($"Assign##{popupId}"))
+            if (ImGuiComponents.IconButton($"##btn{popupId}", FontAwesomeIcon.UserPlus))
                 ImGui.OpenPopup(popupId);
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Assign team members");
             if (list.IsLoading) ImGui.EndDisabled();
             ImGui.SameLine();
 
@@ -442,10 +661,25 @@ public class MainWindow : Window, IDisposable
             }
         }
 
+        ImGui.AlignTextToFramePadding();
         if (row.WorkingOnIt.Count == 0)
-            ImGui.TextDisabled("—");
+        {
+            ImGui.TextColored(Theme.Muted, "—");
+            return;
+        }
+
+        // "You" for yourself and character names without the world; full names on hover.
+        var me = plugin.TeamcraftAuth.Uid;
+        var shortNames = row.WorkingOnIt
+            .OrderBy(uid => uid == me ? 0 : 1)
+            .Select(uid => uid == me ? "You" : plugin.Teamcraft.GetDisplayName(uid).Split(" @ ")[0]);
+        var text = string.Join(", ", shortNames);
+        if (IsMine(row))
+            ImGui.TextColored(Theme.SkyBlue, text);
         else
-            ImGui.Text(string.Join(", ", row.WorkingOnIt.Select(plugin.Teamcraft.GetDisplayName)));
+            ImGui.Text(text);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(string.Join("\n", row.WorkingOnIt.Select(plugin.Teamcraft.GetDisplayName)));
     }
 
     /// <summary>Saves to Teamcraft; the list shown is replaced by the saved version, or an error is shown.</summary>
@@ -453,6 +687,8 @@ public class MainWindow : Window, IDisposable
         list.Start(() => plugin.Teamcraft.SetAssigneesAsync(current.Id, changes, CancellationToken.None));
 
     private bool IsLeader => currentTeam != null && currentTeam.Leader == plugin.TeamcraftAuth.Uid;
+
+    private bool IsOfficer => currentTeam != null && plugin.TeamcraftAuth.Uid is { } uid && currentTeam.Officers.Contains(uid);
 
     /// <summary>A crafter (not the leader) who chose to see only their own lists and items.</summary>
     private bool CrafterFilter => currentTeam != null && !IsLeader && plugin.Configuration.OnlyMyAssignments;
@@ -464,31 +700,42 @@ public class MainWindow : Window, IDisposable
     private bool CanUpdateProgress(TeamcraftList current, TeamcraftListRow row) =>
         currentTeam != null && current.TeamId == currentTeam.Id && (IsMine(row) || currentTeam.Leader == plugin.TeamcraftAuth.Uid);
 
+    private static float ProgressBarWidth => 90 * ImGuiHelpers.GlobalScale;
+
+    /// <summary>Room for the progress bar and the four buttons (−, ✎, +, ✓) at the current UI scale.</summary>
+    private static float DoneColumnWidth
+    {
+        get
+        {
+            var style = ImGui.GetStyle();
+            // An icon button is about a frame high and as wide as its icon plus padding; leave a little slack.
+            var button = ImGui.GetFrameHeight() + style.FramePadding.X * 2;
+            return ProgressBarWidth + 4 * (button + style.ItemSpacing.X) + style.CellPadding.X * 2;
+        }
+    }
+
     private void DrawDone(TeamcraftList current, TeamcraftListRow row, bool finalItem)
     {
         var complete = row.Done >= row.Amount;
-        if (complete)
-            ImGui.TextColored(ImGuiColors.HealerGreen, $"{row.Done}/{row.Amount}");
-        else
-            ImGui.Text($"{row.Done}/{row.Amount}");
-
-        if (!CanUpdateProgress(current, row)) return;
+        var canUpdate = CanUpdateProgress(current, row);
+        Theme.Progress(row.Done, row.Amount, canUpdate ? ProgressBarWidth : -1);
+        if (!canUpdate) return;
 
         var id = $"{(finalItem ? "f" : "i")}{row.ItemId}";
         if (list.IsLoading) ImGui.BeginDisabled();
         ImGui.SameLine();
         if (row.Done <= 0) ImGui.BeginDisabled();
-        if (ImGui.SmallButton($"-##minus{id}"))
+        if (ImGuiComponents.IconButton($"##minus{id}", FontAwesomeIcon.Minus))
             SaveProgress(current, [new DoneChange(finalItem, row.ItemId, row.RecipeId, -1)]);
         if (row.Done <= 0) ImGui.EndDisabled();
         ImGui.SameLine();
         DrawSetAmount(current, row, finalItem, id);
         ImGui.SameLine();
         if (complete) ImGui.BeginDisabled();
-        if (ImGui.SmallButton($"+##plus{id}"))
+        if (ImGuiComponents.IconButton($"##plus{id}", FontAwesomeIcon.Plus))
             SaveProgress(current, [new DoneChange(finalItem, row.ItemId, row.RecipeId, 1)]);
         ImGui.SameLine();
-        if (ImGui.SmallButton($"Done##all{id}"))
+        if (ImGuiComponents.IconButton($"##all{id}", FontAwesomeIcon.Check))
             SaveProgress(current, [new DoneChange(finalItem, row.ItemId, row.RecipeId, null)]);
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             ImGui.SetTooltip("Mark the full amount as done (its ingredients are marked as used, like in Teamcraft).");
@@ -500,7 +747,9 @@ public class MainWindow : Window, IDisposable
     private void DrawSetAmount(TeamcraftList current, TeamcraftListRow row, bool finalItem, string id)
     {
         var popupId = $"setAmount##{id}";
-        if (ImGui.SmallButton($"Set##set{id}"))
+        var clicked = ImGuiComponents.IconButton($"##set{id}", FontAwesomeIcon.Pen);
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Type the amount done");
+        if (clicked)
         {
             typedAmount = row.Done;
             focusAmountBox = true;
@@ -562,38 +811,104 @@ public class MainWindow : Window, IDisposable
                 .ToList());
         }
         if (list.IsLoading || remaining == 0) ImGui.EndDisabled();
+
+        // Raise done counts to what this character owns (bags, saddlebag, remembered retainers); never lowers them.
+        var fills = mine
+            .Where(x => x.Row.GameItemId is not null)
+            .Select(x => (x.Final, x.Row, Target: Math.Min(x.Row.Amount, plugin.Inventory.Holdings(x.Row.GameItemId!.Value).Total)))
+            .Where(x => x.Target > x.Row.Done)
+            .ToList();
+        ImGui.SameLine();
+        if (list.IsLoading || fills.Count == 0) ImGui.BeginDisabled();
+        if (ImGui.Button($"Fill from inventory ({fills.Count})"))
+        {
+            // Final items first, like "Complete all", so ingredients they used aren't counted twice.
+            SaveProgress(current, fills
+                .OrderByDescending(x => x.Final)
+                .Select(x => new DoneChange(x.Final, x.Row.ItemId, x.Row.RecipeId, null, x.Target, OnlyIncrease: true))
+                .ToList());
+        }
+        if (list.IsLoading || fills.Count == 0) ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Sets your items' done count to how many you own (bags, saddlebag and retainers).\nIt never lowers a count.");
     }
 
     private void SaveProgress(TeamcraftList current, IReadOnlyList<DoneChange> changes) =>
         list.Start(() => plugin.Teamcraft.SetDoneAsync(current.Id, changes, CancellationToken.None));
 
-    private void DrawRows(string tableId, IReadOnlyList<TeamcraftListRow> rows, bool finalItem)
+    private void DrawRows(List<(bool Final, TeamcraftListRow Row)> rows, ListSection section)
     {
-        if (!ImGui.BeginTable(tableId, 4, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable))
+        // Every section uses the same table id, so ImGui keeps their columns in sync: resizing one resizes them all.
+        // (The "v2" leaves behind widths the game saved for the old, unsynced tables.)
+        if (!ImGui.BeginTable("##listItems.v2", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable))
             return;
 
         ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("Done", ImGuiTableColumnFlags.WidthFixed, 200);
+        ImGui.TableSetupColumn("Done", ImGuiTableColumnFlags.WidthFixed, DoneColumnWidth);
+        ImGui.TableSetupColumn("Have", ImGuiTableColumnFlags.WidthFixed, 60);
         ImGui.TableSetupColumn("NA price (gil)", ImGuiTableColumnFlags.WidthFixed, 170);
         ImGui.TableSetupColumn("Assigned to", ImGuiTableColumnFlags.WidthStretch);
         ImGui.TableHeadersRow();
 
         var current = list.Value!;
-        foreach (var row in rows)
+        foreach (var (final, row) in rows)
         {
-            if ((CrafterFilter || (IsLeader && onlyMyItems)) && !IsMine(row)) continue;
-
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
-            ImGui.Text(Plugin.GetItemName(row));
+            var iconSize = new Vector2(ImGui.GetFrameHeight());
+            if (Plugin.GetItemIcon(row) is { } icon)
+                ImGui.Image(icon.Handle, iconSize);
+            else
+                ImGui.Dummy(iconSize);
+            ImGui.SameLine();
+            ImGui.AlignTextToFramePadding();
+            if (section == ListSection.PreCrafts && plugin.ItemSources.CraftJobOf(row) is { } job)
+            {
+                ImGui.TextColored(Theme.Muted, job);
+                ImGui.SameLine();
+            }
+            if (row.Done >= row.Amount)
+                ImGui.TextColored(Theme.Muted, Plugin.GetItemName(row));
+            else
+                ImGui.Text(Plugin.GetItemName(row));
             ImGui.TableNextColumn();
-            DrawDone(current, row, finalItem);
+            DrawDone(current, row, final);
             ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            DrawHave(row);
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
             DrawPrice(row);
             ImGui.TableNextColumn();
-            DrawAssignees(row, finalItem);
+            DrawAssignees(row, final);
         }
 
         ImGui.EndTable();
+    }
+
+    /// <summary>How many you own; hover for bags / saddlebag / each retainer.</summary>
+    private void DrawHave(TeamcraftListRow row)
+    {
+        if (row.GameItemId is not { } id)
+        {
+            ImGui.TextDisabled("—");
+            return;
+        }
+
+        var have = plugin.Inventory.Holdings(id);
+        var stillNeeded = row.Amount - row.Done;
+        if (have.Total == 0)
+            ImGui.TextDisabled("0");
+        else if (stillNeeded > 0 && have.Total >= stillNeeded)
+            ImGui.TextColored(ImGuiColors.HealerGreen, $"{have.Total:N0}");
+        else
+            ImGui.Text($"{have.Total:N0}");
+
+        if (!ImGui.IsItemHovered()) return;
+        var lines = new List<string> { $"Bags: {have.Bags:N0}", $"Saddlebag: {have.Saddlebag:N0}" };
+        lines.AddRange(have.Retainers.Select(r => $"{r.Retainer}: {r.Count:N0}"));
+        lines.Add(string.Empty);
+        lines.Add("Saddlebag and retainers update when you open them in game.");
+        ImGui.SetTooltip(string.Join("\n", lines));
     }
 }
