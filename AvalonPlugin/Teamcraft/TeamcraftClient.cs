@@ -101,20 +101,31 @@ public sealed partial class TeamcraftClient(HttpClient http, TeamcraftAuth auth,
     }
 
     /// <summary>Non-archived lists attached to a team, sorted by name.</summary>
+    /// <remarks>Also counts the items assigned to the signed-in user, so crafters can see only their work.</remarks>
     public Task<IReadOnlyList<TeamcraftListSummary>> GetTeamListsAsync(string teamId, CancellationToken ct) =>
-        GetListSummariesAsync("teamId", teamId, ct);
+        GetListSummariesAsync("teamId", teamId, true, ct);
 
     /// <summary>Non-archived lists the signed-in user created, sorted by name.</summary>
     public Task<IReadOnlyList<TeamcraftListSummary>> GetMyListsAsync(CancellationToken ct) =>
-        GetListSummariesAsync("authorId", auth.Uid ?? throw new TeamcraftException("Sign in to Teamcraft to see your lists."), ct);
+        GetListSummariesAsync("authorId", auth.Uid ?? throw new TeamcraftException("Sign in to Teamcraft to see your lists."), false, ct);
 
-    private async Task<IReadOnlyList<TeamcraftListSummary>> GetListSummariesAsync(string field, string value, CancellationToken ct)
+    private async Task<IReadOnlyList<TeamcraftListSummary>> GetListSummariesAsync(string field, string value, bool countMyItems, CancellationToken ct)
     {
-        // Only fetch the few fields the drop-down needs; full lists can be large.
-        var docs = await RunQueryAsync("lists", field, "EQUAL", value, ["name", "teamId", "archived"], ct);
+        // Only fetch the fields the drop-down needs; the item rows only when counting assignments.
+        string[] select = countMyItems ? ["name", "teamId", "archived", "finalItems", "items"] : ["name", "teamId", "archived"];
+        var docs = await RunQueryAsync("lists", field, "EQUAL", value, select, ct);
+        var uid = auth.Uid;
         return docs
             .Where(d => !(d.Fields["archived"] is JsonValue archived && archived.TryGetValue<bool>(out var isArchived) && isArchived))
-            .Select(d => new TeamcraftListSummary(d.Id, d.Fields["name"]?.ToString() ?? "(unnamed list)", d.Fields["teamId"]?.ToString()))
+            .Select(d =>
+            {
+                var mine = ReadRows(d.Fields["finalItems"]).Concat(ReadRows(d.Fields["items"]))
+                    .Where(r => uid != null && r.WorkingOnIt.Contains(uid))
+                    .ToList();
+                return new TeamcraftListSummary(
+                    d.Id, d.Fields["name"]?.ToString() ?? "(unnamed list)", d.Fields["teamId"]?.ToString(),
+                    mine.Count, mine.Count(r => r.Done < r.Amount));
+            })
             .OrderBy(l => l.Name, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
     }

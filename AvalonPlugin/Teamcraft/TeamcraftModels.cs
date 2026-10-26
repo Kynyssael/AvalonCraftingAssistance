@@ -34,7 +34,7 @@ public sealed record TeamcraftList(
     IReadOnlyList<TeamcraftListRow> Items,
     string UpdateTime);
 
-/// <summary>Just enough of a list to show it in a drop-down.</summary>
-public sealed record TeamcraftListSummary(string Id, string Name, string? TeamId);
+/// <summary>Just enough of a list to show it in a drop-down, with how many items are assigned to the signed-in user.</summary>
+public sealed record TeamcraftListSummary(string Id, string Name, string? TeamId, int MyItems = 0, int MyRemaining = 0);
 
 public sealed record TeamcraftTeam(string Id, string Name, string Leader, IReadOnlyList<string> Members);

@@ -20,6 +20,9 @@ public class Configuration : IPluginConfiguration
 
     public string? SelectedTeamId { get; set; }
 
+    /// <summary>For crafters (not the team leader): show only lists and items assigned to them.</summary>
+    public bool OnlyMyAssignments { get; set; } = true;
+
     /// <summary>Character names of Teamcraft users, by user id, so names show up instantly.</summary>
     public ConcurrentDictionary<string, string> TeamcraftNames { get; set; } = new();
 

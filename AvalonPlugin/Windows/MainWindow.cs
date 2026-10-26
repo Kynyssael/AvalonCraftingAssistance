@@ -44,6 +44,9 @@ public class MainWindow : Window, IDisposable
 
     public void Dispose() { }
 
+    // Reload the list drop-down each time the window opens, so new assignments show up.
+    public override void OnOpen() => listChoicesTeamId = null;
+
     public override void Draw()
     {
         if (!plugin.AvalonKey.IsUnlocked)
@@ -218,16 +221,36 @@ public class MainWindow : Window, IDisposable
         {
             if (choices != null)
             {
-                if (teamId.Length > 0)
-                    DrawListChoiceGroup("Team lists", choices.TeamLists, "No lists attached to this team.");
-                var teamIds = choices.TeamLists.Select(l => l.Id).ToHashSet();
-                DrawListChoiceGroup("My lists", choices.MyLists.Where(l => !teamIds.Contains(l.Id)).ToList(), "No other lists.");
+                if (CrafterFilter)
+                {
+                    DrawListChoiceGroup("Lists with your assignments", choices.TeamLists.Where(l => l.MyItems > 0).ToList(),
+                                        "Nothing is assigned to you yet.");
+                }
+                else
+                {
+                    if (teamId.Length > 0)
+                        DrawListChoiceGroup("Team lists", choices.TeamLists, "No lists attached to this team.");
+                    var teamIds = choices.TeamLists.Select(l => l.Id).ToHashSet();
+                    DrawListChoiceGroup("My lists", choices.MyLists.Where(l => !teamIds.Contains(l.Id)).ToList(), "No other lists.");
+                }
             }
             ImGui.EndCombo();
         }
         ImGui.SameLine();
         if (ImGui.SmallButton("Refresh##lists"))
             LoadListChoices(teamId);
+
+        // Crafters can narrow everything down to their own work; the leader always sees all of it.
+        if (currentTeam != null && !IsLeader)
+        {
+            ImGui.SameLine();
+            var onlyMine = plugin.Configuration.OnlyMyAssignments;
+            if (ImGui.Checkbox("Only my assignments", ref onlyMine))
+            {
+                plugin.Configuration.OnlyMyAssignments = onlyMine;
+                plugin.Configuration.Save();
+            }
+        }
 
         if (listChoices.Error != null)
             ImGui.TextColored(ImGuiColors.DalamudRed, listChoices.Error);
@@ -240,7 +263,10 @@ public class MainWindow : Window, IDisposable
             ImGui.TextDisabled($"  {emptyText}");
         foreach (var summary in lists)
         {
-            if (ImGui.Selectable($"  {summary.Name}##{summary.Id}", summary.Id == list.Value?.Id))
+            var mine = summary.MyItems == 0 ? string.Empty
+                : summary.MyRemaining == 0 ? "  (your items done)"
+                : $"  ({summary.MyRemaining} of yours left)";
+            if (ImGui.Selectable($"  {summary.Name}{mine}##{summary.Id}", summary.Id == list.Value?.Id))
                 OpenList(summary.Id);
         }
         ImGui.Spacing();
@@ -387,6 +413,11 @@ public class MainWindow : Window, IDisposable
     private void SaveAssignments(TeamcraftList current, IReadOnlyList<RowAssignment> changes) =>
         list.Start(() => plugin.Teamcraft.SetAssigneesAsync(current.Id, changes, CancellationToken.None));
 
+    private bool IsLeader => currentTeam != null && currentTeam.Leader == plugin.TeamcraftAuth.Uid;
+
+    /// <summary>A crafter (not the leader) who chose to see only their own lists and items.</summary>
+    private bool CrafterFilter => currentTeam != null && !IsLeader && plugin.Configuration.OnlyMyAssignments;
+
     private bool IsMine(TeamcraftListRow row) =>
         plugin.TeamcraftAuth.Uid is { } uid && row.WorkingOnIt.Contains(uid);
 
@@ -466,12 +497,21 @@ public class MainWindow : Window, IDisposable
             .Concat(current.Items.Select(r => (Final: false, Row: r)))
             .Where(x => IsMine(x.Row))
             .ToList();
-        if (mine.Count == 0 || currentTeam == null || current.TeamId != currentTeam.Id) return;
+        if (currentTeam == null || current.TeamId != currentTeam.Id) return;
+        if (mine.Count == 0)
+        {
+            if (CrafterFilter)
+                ImGui.TextDisabled("Nothing on this list is assigned to you. Untick \"Only my assignments\" to see everything.");
+            return;
+        }
 
         var remaining = mine.Count(x => x.Row.Done < x.Row.Amount);
         ImGui.Text($"Your items: {mine.Count - remaining}/{mine.Count} done");
-        ImGui.SameLine();
-        ImGui.Checkbox("Only my items", ref onlyMyItems);
+        if (IsLeader)
+        {
+            ImGui.SameLine();
+            ImGui.Checkbox("Only my items", ref onlyMyItems);
+        }
         ImGui.SameLine();
         if (list.IsLoading || remaining == 0) ImGui.BeginDisabled();
         if (ImGui.Button("Complete all my items"))
@@ -502,7 +542,7 @@ public class MainWindow : Window, IDisposable
         var current = list.Value!;
         foreach (var row in rows)
         {
-            if (onlyMyItems && !IsMine(row)) continue;
+            if ((CrafterFilter || (IsLeader && onlyMyItems)) && !IsMine(row)) continue;
 
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
