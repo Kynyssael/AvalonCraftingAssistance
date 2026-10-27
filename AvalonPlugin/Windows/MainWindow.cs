@@ -904,11 +904,65 @@ public class MainWindow : Window, IDisposable
         else
             ImGui.Text($"{have.Total:N0}");
 
+        // Dotted underline so it reads as "hover me" when there's something to break down.
+        if (have.Total > 0)
+            DottedUnderline(ImGui.GetItemRectMin(), ImGui.GetItemRectMax());
+
         if (!ImGui.IsItemHovered()) return;
-        var lines = new List<string> { $"Bags: {have.Bags:N0}", $"Saddlebag: {have.Saddlebag:N0}" };
-        lines.AddRange(have.Retainers.Select(r => $"{r.Retainer}: {r.Count:N0}"));
-        lines.Add(string.Empty);
-        lines.Add("Saddlebag and retainers update when you open them in game.");
-        ImGui.SetTooltip(string.Join("\n", lines));
+        DrawHaveTooltip(row, have, stillNeeded);
+    }
+
+    /// <summary>Where the items are: on you, saddlebag, each retainer (largest first), plus what's still needed.</summary>
+    private void DrawHaveTooltip(TeamcraftListRow row, ItemHoldings have, int stillNeeded)
+    {
+        ImGui.BeginTooltip();
+        ImGui.TextColored(Theme.Gold, Plugin.GetItemName(row));
+
+        var places = new List<(string Where, int Count)> { ("On you", have.Bags), ("Saddlebag", have.Saddlebag) };
+        places.AddRange(have.Retainers.Select(r => ($"Retainer {r.Retainer}", r.Count)));
+        var owned = places.Where(p => p.Count > 0).OrderByDescending(p => p.Count).ToList();
+
+        if (owned.Count == 0)
+        {
+            ImGui.TextColored(Theme.Muted, "You don't have any.");
+        }
+        else if (ImGui.BeginTable("##haveTip", 2))
+        {
+            foreach (var (where, count) in owned)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.Text(where);
+                ImGui.TableNextColumn();
+                ImGui.Text($"{count:N0}");
+            }
+            if (owned.Count > 1)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.TextColored(Theme.Lavender, "Total");
+                ImGui.TableNextColumn();
+                ImGui.TextColored(Theme.Lavender, $"{have.Total:N0}");
+            }
+            ImGui.EndTable();
+        }
+
+        if (stillNeeded > 0)
+            ImGui.TextColored(have.Total >= stillNeeded ? Theme.Done : Theme.Muted, $"Still needed: {stillNeeded:N0}");
+
+        ImGui.Spacing();
+        var known = plugin.Inventory.KnownRetainers().Count;
+        ImGui.TextColored(Theme.Muted, known == 0
+            ? "Open your saddlebag and retainers in game once so they're counted."
+            : $"Counts {known} retainer{(known == 1 ? string.Empty : "s")} and the saddlebag as of the last time you opened them.");
+        ImGui.EndTooltip();
+    }
+
+    private static void DottedUnderline(Vector2 min, Vector2 max)
+    {
+        var drawList = ImGui.GetWindowDrawList();
+        var color = ImGui.GetColorU32(Theme.Muted with { W = 0.7f });
+        for (var x = min.X; x < max.X; x += 4)
+            drawList.AddLine(new Vector2(x, max.Y), new Vector2(Math.Min(x + 2, max.X), max.Y), color);
     }
 }
