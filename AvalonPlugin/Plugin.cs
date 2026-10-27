@@ -23,6 +23,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
     [PluginService] internal static IPlayerState PlayerState { get; private set; } = null!;
     [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
+    [PluginService] internal static IGameGui GameGui { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
 
     public Configuration Configuration { get; }
@@ -31,6 +32,14 @@ public sealed class Plugin : IDalamudPlugin
     /// <summary>Item sections from game data; built on first use (reads a few game sheets).</summary>
     public ItemSources ItemSources => itemSources.Value;
     private readonly Lazy<ItemSources> itemSources = new(() => new ItemSources());
+
+    /// <summary>NPCs selling items for gil; starts building in the background on first use.</summary>
+    public VendorSources Vendors => vendors.Value;
+    private readonly Lazy<VendorSources> vendors = new(() => new VendorSources());
+
+    /// <summary>Opens the in-game map with a flag on the vendor.</summary>
+    public static void ShowOnMap(Vendor vendor) =>
+        GameGui.OpenMapWithMapLink(new Dalamud.Game.Text.SeStringHandling.Payloads.MapLinkPayload(vendor.TerritoryId, vendor.MapId, vendor.X, vendor.Y));
     public AvalonKeyService AvalonKey { get; }
     public TeamcraftAuth TeamcraftAuth { get; }
     public TeamcraftClient Teamcraft { get; }

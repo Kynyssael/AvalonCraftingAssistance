@@ -871,6 +871,8 @@ public class MainWindow : Window, IDisposable
                 ImGui.TextColored(Theme.Muted, Plugin.GetItemName(row));
             else
                 ImGui.Text(Plugin.GetItemName(row));
+            if (section == ListSection.Vendors)
+                DrawVendor(row);
             ImGui.TableNextColumn();
             DrawDone(current, row, final);
             ImGui.TableNextColumn();
@@ -884,6 +886,56 @@ public class MainWindow : Window, IDisposable
         }
 
         ImGui.EndTable();
+    }
+
+    /// <summary>
+    /// The NPC selling the item (nearest-alphabetical place first), its gil price, and a map button that flags the
+    /// vendor on the in-game map. With several vendors, the button opens a list to pick from.
+    /// </summary>
+    private void DrawVendor(TeamcraftListRow row)
+    {
+        if (row.GameItemId is not { } itemId) return;
+        var vendorIndex = plugin.Vendors;
+        ImGui.SameLine();
+        if (!vendorIndex.IsReady)
+        {
+            ImGui.TextColored(Theme.Muted, "· finding vendors…");
+            return;
+        }
+
+        var vendors = vendorIndex.For(itemId);
+        if (vendors.Count == 0) return;
+        var price = VendorSources.GilPrice(itemId);
+        var first = vendors[0];
+        var popupId = $"vendors##{row.ItemId}";
+
+        if (ImGuiComponents.IconButton($"##map{row.ItemId}", FontAwesomeIcon.MapMarkerAlt))
+        {
+            if (vendors.Count == 1) Plugin.ShowOnMap(first);
+            else ImGui.OpenPopup(popupId);
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(vendors.Count == 1 ? "Show this vendor on the map" : $"{vendors.Count} vendors — pick one to show on the map");
+
+        ImGui.SameLine();
+        ImGui.AlignTextToFramePadding();
+        var more = vendors.Count > 1 ? $" +{vendors.Count - 1} more" : string.Empty;
+        ImGui.TextColored(Theme.Muted, $"{price:N0} gil · {first.Npc}, {first.Place}{more}");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(string.Join("\n", vendors.Take(12).Select(v => $"{v.Npc} — {v.Place} ({v.X:0.0}, {v.Y:0.0})")) +
+                             (vendors.Count > 12 ? $"\n…and {vendors.Count - 12} more" : string.Empty) +
+                             $"\n\n{price:N0} gil each from NPC vendors.");
+
+        if (ImGui.BeginPopup(popupId))
+        {
+            ImGui.TextColored(Theme.Gold, $"Sold by ({price:N0} gil each)");
+            foreach (var vendor in vendors)
+            {
+                if (ImGui.Selectable($"{vendor.Npc} — {vendor.Place} ({vendor.X:0.0}, {vendor.Y:0.0})##{vendor.Npc}{vendor.Place}"))
+                    Plugin.ShowOnMap(vendor);
+            }
+            ImGui.EndPopup();
+        }
     }
 
     /// <summary>How many you own; hover for bags / saddlebag / each retainer.</summary>
